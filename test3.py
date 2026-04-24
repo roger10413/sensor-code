@@ -1,6 +1,6 @@
 # %%
 import nidaqmx
-from nidaqmx.constants import AcquisitionType, FrequencyUnits
+from nidaqmx.constants import AcquisitionType, FrequencyUnits, READ_ALL_AVAILABLE
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from collections import deque
@@ -17,12 +17,13 @@ CTR_CHANNEL        = "ctr0"      # 計數器通道
 SAMPLE_RATE        = 1000        # 取樣率 (Hz)
 DISPLAY_WINDOW_SEC = 2.0         # 視窗顯示長度 (秒)
 UPDATE_INTERVAL    = 0.5         # 更新間隔 (秒)
-TOTAL_DURATION     = 30.0        # 總量測時間 (秒)，None 則一直執行
+TOTAL_DURATION     = 600.0       # 總量測時間 (秒)，None 則一直執行
 FREQ_MIN           = 3.060e6     # 頻率 y 軸下限 (Hz)
 FREQ_MAX           = 3.140e6     # 頻率 y 軸上限 (Hz)
+BUFFER_SIZE        = 100000      # 硬體緩衝區大小（樣本數），調大避免溢位
 
 # CSV 輸出設定
-CSV_DIR            = r"C:\Users\432\OneDrive - 國立中正大學\sensor_code\data"         # 存檔資料夾，"." 表示與程式同目錄
+CSV_DIR            = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\data"
 CSV_PREFIX         = "freq_log"  # 檔名前綴，實際檔名會加上日期時間
 # ------------------------------------
 
@@ -36,10 +37,10 @@ def realtime_waveform(device_name=DEVICE_NAME,
                       total_duration=TOTAL_DURATION,
                       freq_min=FREQ_MIN,
                       freq_max=FREQ_MAX,
+                      buffer_size=BUFFER_SIZE,
                       csv_dir=CSV_DIR,
                       csv_prefix=CSV_PREFIX):
 
-    chunk_size      = max(1, int(round(sample_rate * update_interval)))
     display_samples = max(1, int(round(sample_rate * display_window_sec)))
 
     freq_deque = deque(maxlen=display_samples)
@@ -69,14 +70,13 @@ def realtime_waveform(device_name=DEVICE_NAME,
                         ha='right', va='top', fontsize=11,
                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6))
 
-    # 左上角顯示已寫入筆數
     count_text = ax.text(0.02, 0.95, "Saved: 0 pts", transform=ax.transAxes,
                          ha='left', va='top', fontsize=10, color='gray')
 
     plt.tight_layout()
 
-    start_time   = time.time()
-    saved_count  = 0
+    start_time  = time.time()
+    saved_count = 0
 
     try:
         with nidaqmx.Task() as ai_task, nidaqmx.Task() as ci_task:
@@ -88,7 +88,8 @@ def realtime_waveform(device_name=DEVICE_NAME,
             )
             ai_task.timing.cfg_samp_clk_timing(
                 rate=sample_rate,
-                sample_mode=AcquisitionType.CONTINUOUS
+                sample_mode=AcquisitionType.CONTINUOUS,
+                samps_per_chan=buffer_size          # ← 加大硬體緩衝區
             )
 
             # ---- CI frequency channel ----
@@ -101,7 +102,8 @@ def realtime_waveform(device_name=DEVICE_NAME,
             ci_task.timing.cfg_samp_clk_timing(
                 rate=sample_rate,
                 source=f"/{device_name}/ai/SampleClock",
-                sample_mode=AcquisitionType.CONTINUOUS
+                sample_mode=AcquisitionType.CONTINUOUS,
+                samps_per_chan=buffer_size          # ← 加大硬體緩衝區
             )
 
             ci_task.start()
@@ -112,28 +114,35 @@ def realtime_waveform(device_name=DEVICE_NAME,
             def update(frame):
                 nonlocal saved_count
 
+                elapsed = time.time() - start_time
+
                 try:
+                    # READ_ALL_AVAILABLE：一次讀走緩衝區內所有積累的樣本
+                    # 避免因 matplotlib 延遲造成緩衝區溢位 (-200279)
                     freqs = ci_task.read(
-                        number_of_samples_per_channel=chunk_size,
+                        number_of_samples_per_channel=READ_ALL_AVAILABLE,
                         timeout=2.0
                     )
                     ai_task.read(
-                        number_of_samples_per_channel=chunk_size,
+                        number_of_samples_per_channel=READ_ALL_AVAILABLE,
                         timeout=2.0
                     )
                 except nidaqmx.DaqError as e:
                     print("讀取 DAQ 資料發生錯誤：", e)
                     return
 
-                elapsed     = time.time() - start_time
+                freqs = np.asarray(freqs, dtype=float).flatten()
+                n     = len(freqs)
+                if n == 0:
+                    return
+
                 wall_clock  = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                freqs       = np.asarray(freqs, dtype=float).flatten()
                 freqs_clean = np.where((freqs > 0) & np.isfinite(freqs), freqs, np.nan)
 
-                # 計算每個樣本的時間戳記
+                # 依實際讀到的樣本數反推每個樣本的時間戳記
                 t_end      = elapsed
-                t_start    = elapsed - chunk_size / sample_rate
-                timestamps = np.linspace(t_start, t_end, len(freqs_clean))
+                t_start    = elapsed - n / sample_rate
+                timestamps = np.linspace(t_start, t_end, n)
 
                 # ---- 寫入 CSV（每個樣本一列）----
                 for t, f in zip(timestamps, freqs_clean):
@@ -145,8 +154,8 @@ def realtime_waveform(device_name=DEVICE_NAME,
                     time_deque.append(t)
                     freq_deque.append(f)
 
-                saved_count += len(freqs_clean)
-                csv_file.flush()   # 即時寫入磁碟，即使程式異常中斷也不會遺失資料
+                saved_count += n
+                csv_file.flush()   # 即時寫入磁碟
 
                 # ---- 更新圖表 ----
                 x_data = np.array(time_deque)
@@ -198,6 +207,7 @@ if __name__ == "__main__":
         total_duration=TOTAL_DURATION,
         freq_min=FREQ_MIN,
         freq_max=FREQ_MAX,
+        buffer_size=BUFFER_SIZE,
         csv_dir=CSV_DIR,
         csv_prefix=CSV_PREFIX
     )

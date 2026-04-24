@@ -14,9 +14,9 @@ CTR_CHANNEL        = "ctr0"      # 計數器通道
 SAMPLE_RATE        = 1000        # 取樣率 (Hz)
 DISPLAY_WINDOW_SEC = 2.0         # 視窗顯示長度 (秒)
 UPDATE_INTERVAL    = 0.5         # 更新間隔 (秒)
-TOTAL_DURATION     = 30.0        # 總量測時間 (秒)，None 則一直執行
+TOTAL_DURATION     = 300.0        # 總量測時間 (秒)，None 則一直執行
 FREQ_MIN           = 3.0755e6     # 頻率 y 軸下限 (Hz)
-FREQ_MAX           = 3.076e6     # 頻率 y 軸上限 (Hz)
+FREQ_MAX           = 3.078e6     # 頻率 y 軸上限 (Hz)
 # ------------------------------------
 
 
