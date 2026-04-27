@@ -17,13 +17,13 @@ CTR_CHANNEL        = "ctr0"      # 計數器通道
 SAMPLE_RATE        = 1000        # 取樣率 (Hz)
 DISPLAY_WINDOW_SEC = 2.0         # 視窗顯示長度 (秒)
 UPDATE_INTERVAL    = 0.5         # 更新間隔 (秒)
-TOTAL_DURATION     = 600.0       # 總量測時間 (秒)，None 則一直執行
+TOTAL_DURATION     = 1000.0       # 總量測時間 (秒)，None 則一直執行
 FREQ_MIN           = 3.060e6     # 頻率 y 軸下限 (Hz)
 FREQ_MAX           = 3.140e6     # 頻率 y 軸上限 (Hz)
 BUFFER_SIZE        = 100000      # 硬體緩衝區大小（樣本數），調大避免溢位
 
 # CSV 輸出設定
-CSV_DIR            = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\data"
+CSV_DIR            = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\rawdata"
 CSV_PREFIX         = "freq_log"  # 檔名前綴，實際檔名會加上日期時間
 # ------------------------------------
 
