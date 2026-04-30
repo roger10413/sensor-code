@@ -18,12 +18,12 @@ from datetime import datetime
 from scipy.ndimage import uniform_filter1d
 
 # ===================== 使用者可調參數 =====================
-INPUT_CSV       = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\\rawdata\freq_log_20260427_154147.csv"
+INPUT_CSV       = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\\rawdata\freq_log_20260430_140106.csv"
 OUTPUT_ROOT     = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\processed"
 
 # 量測環境（手動填入）
-TEMPERATURE_C   = 23.7
-HUMIDITY_PCT    = 47.0
+TEMPERATURE_C   = 27.0
+HUMIDITY_PCT    = 46.0
 
 # 重量設定（含空載 0g 和底座 118.5g）
 WEIGHT_SEQUENCE = [0, 118.5, 618.5, 1118.5, 1618.5, 2118.5,
