@@ -23,7 +23,7 @@ FREQ_MAX           = 3.140e6     # 頻率 y 軸上限 (Hz)
 BUFFER_SIZE        = 100000      # 硬體緩衝區大小（樣本數），調大避免溢位
 
 # CSV 輸出設定
-CSV_DIR            = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\rawdata"
+CSV_DIR            = r"D:\sensor_data\rawdata"
 CSV_PREFIX         = "freq_log"  # 檔名前綴，實際檔名會加上日期時間
 # ------------------------------------
 

@@ -18,23 +18,23 @@ from datetime import datetime
 from scipy.ndimage import uniform_filter1d
 
 # ===================== 使用者可調參數 =====================
-INPUT_CSV       = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\\rawdata\freq_log_20260430_140106.csv"
-OUTPUT_ROOT     = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\processed"
+INPUT_CSV       = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\\rawdata\freq_log_20260512_143219.csv"
+OUTPUT_ROOT     = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\newbase_v2"
 
 # 量測環境（手動填入）
-TEMPERATURE_C   = 27.0
-HUMIDITY_PCT    = 46.0
+TEMPERATURE_C   = 23.6
+HUMIDITY_PCT    = 50.0
 
-# 重量設定（含空載 0g 和底座 118.5g）
-WEIGHT_SEQUENCE = [0, 118.5, 618.5, 1118.5, 1618.5, 2118.5,
-                   2618.5, 3118.5, 3618.5, 4118.5, 4618.5, 5118.5]
+# 重量設定（含空載 0g 和底座 242.2g）
+WEIGHT_SEQUENCE = [0, 242.2, 742.2, 1242.2, 1742.2, 2242.2,
+                   2742.2, 3242.2, 3742.2, 4242.2, 4742.2, 5242.2]
 
 # 穩定段偵測參數
 SMOOTH_WINDOW_S   = 2.0     # 平滑視窗 (秒)
-STABLE_WINDOW_S   = 5.0     # 判斷穩定所需的最短時間 (秒)
-STABLE_STD_HZ     = 60.0    # 穩定判斷：視窗內標準差需低於此值 (Hz)
+STABLE_WINDOW_S   = 10.0     # 判斷穩定所需的最短時間 (秒)
+STABLE_STD_HZ     = 15.0    # 穩定判斷：視窗內標準差需低於此值 (Hz)
 JUMP_THRESHOLD_HZ = 50.0    # 頻率跳變閾值 (Hz)
-SETTLE_SKIP_S     = 3.0     # 跳變後跳過的緩衝時間 (秒)
+SETTLE_SKIP_S     = 10.0     # 跳變後跳過的緩衝時間 (秒)
 FREQ_VALID_MIN    = 3.0e6   # 過濾無效量測值下限 (Hz)
 
 # 基頻判斷參數
@@ -44,7 +44,7 @@ BASE_FREQ_TOLERANCE_HZ = 50.0
 MIN_ABOVE_BASE_HZ = 80.0
 # =========================================================
 
-WEIGHT_LABELS = {0: "bare (0g)", 118.5: "base (118.5g)"}
+WEIGHT_LABELS = {0: "bare (0g)", 242.2: "base (242.2g)"}
 
 
 def make_run_dir(output_root, file_stem):
@@ -115,7 +115,7 @@ def classify_and_extract(segments):
     然後只保留「緊接在基頻段之後的加重段」。
     
     實驗流程：
-      空載基頻(0g) → [加重] → 底座基頻(118.5g附近? 不對，底座也是一次性放上去的)
+      空載基頻(0g) → [加重] → 底座基頻(242.2g附近? 不對，底座也是一次性放上去的)
     
     修正後的流程理解：
       - 基頻 = 什麼都沒放（最低頻率群）

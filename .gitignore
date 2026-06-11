@@ -15,6 +15,9 @@ build/
 .conda/
 sensor/
 
+# Claude Code
+.claude/
+
 # IDE
 .vscode/
 .idea/

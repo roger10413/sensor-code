@@ -31,7 +31,7 @@ OUTPUT_ROOT   = r"C:\Users\432\OneDrive - 國立中正大學\sensor_data\reprodu
 
 WEIGHT_LABELS = {
     0:     "bare (0g)",
-    118.5: "base (118.5g)",
+    242.2: "base (242.2g)",
 }
 
 
