@@ -16,11 +16,11 @@ from scipy.ndimage import uniform_filter1d
 from scipy import stats as scipy_stats
 
 # ===================== 使用者可調參數 =====================
-INPUT_CSV   = r"D:\sensor_data\rawdata\freq_log_20260603_130911.csv"
+INPUT_CSV   = r"D:\sensor_data\rawdata\freq_log_20260617_153325.csv"
 OUTPUT_ROOT = r"D:\sensor_data\processed"
 
-TEMPERATURE_C = 23
-HUMIDITY_PCT  = 39
+TEMPERATURE_C = 23.8
+HUMIDITY_PCT  = 44
 
 WEIGHT_SEQUENCE = [0, 315.0, 815.0, 1315.0, 1815.0, 2315.0,
                    2815.0, 3315.0, 3815.0, 4315.0, 4815.0, 5315.0]

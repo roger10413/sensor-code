@@ -22,8 +22,8 @@ from scipy import stats
 
 # ===================== 使用者每次跑前修改這裡 =====================
 
-BATCH_NAME = "batch_242g"       # 後10次改成 "batch_242g"
-BASE_WEIGHT_G = 242.2           # 後10次改成 242.2
+BATCH_NAME = "batch_315g"       # 後10次改成 "batch_242g"
+BASE_WEIGHT_G = 315.0           # 後10次改成 242.2
 
 # None = 自動搜尋（最多前10個）；或手動列檔案路徑
 SUMMARY_FILES = None
@@ -117,7 +117,7 @@ def compute_stats(df_all):
     stats_df['indication_error_hz']  = stats_df['mean'] - stats_df['linear_fit_hz']
     stats_df['indication_error_pct'] = stats_df['indication_error_hz'] / full_range_hz * 100
 
-    print(f"\n線性迴歸：slope={slope:.6f} Hz/g | intercept={intercept:.2f} Hz | R²={r2:.8f}")
+    print(f"\n線性迴歸：sensitivity={1/slope:.6f} g/Hz | intercept={intercept:.2f} Hz | R²={r2:.8f}")
     return stats_df, slope, intercept, r2, full_range_hz
 
 def compute_nonlinearity(stats_df, full_range_hz):
@@ -181,19 +181,20 @@ def compute_per_run_slope(df_all):
         sub = df_all[df_all['run_id'] == run_id].sort_values('weight_g')
         lr = stats.linregress(sub['weight_g'], sub['freq_median_hz'])
         rows.append({
-            'run_id'    : run_id,
-            'run_label' : f"Run{run_id:02d}",
-            'slope_hz_per_g': lr.slope,
-            'intercept_hz'  : lr.intercept,
-            'r_squared'     : lr.rvalue ** 2,
+            'run_id'              : run_id,
+            'run_label'           : f"Run{run_id:02d}",
+            'slope_hz_per_g'      : lr.slope,
+            'sensitivity_g_per_hz': 1 / lr.slope,
+            'intercept_hz'        : lr.intercept,
+            'r_squared'           : lr.rvalue ** 2,
         })
-        print(f"  Run{run_id:02d} | slope={lr.slope:.5f} Hz/g | R²={lr.rvalue**2:.6f}")
+        print(f"  Run{run_id:02d} | sensitivity={1/lr.slope:.5f} g/Hz | R²={lr.rvalue**2:.6f}")
     slope_df = pd.DataFrame(rows)
-    slope_mean = slope_df['slope_hz_per_g'].mean()
-    slope_std  = slope_df['slope_hz_per_g'].std()
+    slope_mean = slope_df['sensitivity_g_per_hz'].mean()
+    slope_std  = slope_df['sensitivity_g_per_hz'].std()
     slope_cv   = slope_std / slope_mean * 100
-    slope_range_pct = (slope_df['slope_hz_per_g'].max() - slope_df['slope_hz_per_g'].min()) / slope_mean * 100
-    print(f"\n  斜率 mean={slope_mean:.5f}, std={slope_std:.5f}, CV={slope_cv:.2f}%")
+    slope_range_pct = (slope_df['sensitivity_g_per_hz'].max() - slope_df['sensitivity_g_per_hz'].min()) / slope_mean * 100
+    print(f"\n  靈敏度 mean={slope_mean:.5f}, std={slope_std:.5f}, CV={slope_cv:.2f}%")
     print(f"  斜率最大最小差 = {slope_range_pct:.2f}%")
     return slope_df, slope_mean, slope_std, slope_cv, slope_range_pct
 
@@ -253,7 +254,7 @@ def plot_mean_std(stats_df, slope, intercept, r2, run_dir, batch_name, base_g):
                 capsize=6, linewidth=1.5, markersize=6, label='Mean ± Std')
     ax.plot(stats_df['weight_g'], stats_df['linear_fit_hz'],
             '--', color='tomato', linewidth=1.2,
-            label=f"Linear fit\nR²={r2:.8f}\nslope={slope:.4f} Hz/g")
+            label=f"Linear fit\nR²={r2:.8f}\nsensitivity={1/slope:.4f} g/Hz")
     ax.set_xlabel("Total Weight (g)", fontsize=12)
     ax.set_ylabel("Frequency (Hz)", fontsize=12)
     ax.set_title(f"[{batch_name}] Mean ± Std & Linear Fit", fontsize=12)
@@ -354,17 +355,17 @@ def plot_repeatability(stats_df, run_dir, batch_name, base_g):
 def plot_per_run_slope(slope_df, slope_mean, run_dir, batch_name):
     """【新圖】各Run斜率柱狀圖"""
     fig, ax = plt.subplots(figsize=(11, 5))
-    bars = ax.bar(slope_df['run_label'], slope_df['slope_hz_per_g'],
+    bars = ax.bar(slope_df['run_label'], slope_df['sensitivity_g_per_hz'],
                   color='steelblue', edgecolor='white', width=0.6)
     ax.axhline(slope_mean, color='red', linestyle='--', linewidth=1.2,
-               label=f'Mean = {slope_mean:.5f} Hz/g')
+               label=f'Mean = {slope_mean:.5f} g/Hz')
     ax.set_xlabel("Run", fontsize=12)
-    ax.set_ylabel("Slope (Hz/g)", fontsize=12)
-    cv = slope_df['slope_hz_per_g'].std() / slope_mean * 100
+    ax.set_ylabel("Sensitivity (g/Hz)", fontsize=12)
+    cv = slope_df['sensitivity_g_per_hz'].std() / slope_mean * 100
     ax.set_title(f"[{batch_name}] Sensitivity per Run | CV = {cv:.2f}%", fontsize=12)
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(fontsize=10)
-    for bar, v in zip(bars, slope_df['slope_hz_per_g']):
+    for bar, v in zip(bars, slope_df['sensitivity_g_per_hz']):
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height()*1.001,
                 f"{v:.4f}", ha='center', va='bottom', fontsize=8)
     plt.xticks(rotation=30, ha='right')
@@ -444,6 +445,25 @@ def plot_env_overview(env_df, run_dir, batch_name):
     plt.savefig(out, dpi=150); plt.close()
     print(f"[圖9] 環境條件：{out}")
 
+def plot_range_error(stats_df, slope, run_dir, batch_name, base_g):
+    sensitivity = 1 / slope  # g/Hz
+    error = stats_df['range_hz'] * sensitivity / 1000  # g / 1000g
+    xlabels = [weight_label(w, base_g) for w in stats_df['weight_g']]
+    fig, ax = plt.subplots(figsize=(11, 5))
+    bars = ax.bar(xlabels, error, color='steelblue', edgecolor='white', width=0.6)
+    ax.set_xlabel("Weight", fontsize=12)
+    ax.set_ylabel("Error (g / 1000g)", fontsize=12)
+    ax.set_title(f"[{batch_name}] Range Error per Weight  (range × sensitivity / 1000g)", fontsize=12)
+    ax.grid(True, axis='y', alpha=0.3)
+    plt.xticks(rotation=30, ha='right')
+    for bar, v in zip(bars, error):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.02,
+                f"{v:.5f}", ha='center', va='bottom', fontsize=8)
+    plt.tight_layout()
+    out = os.path.join(run_dir, "10_range_error.png")
+    plt.savefig(out, dpi=150); plt.close()
+    print(f"[圖10] Range Error：{out}")
+
 # ===================== CSV 輸出 =====================
 
 def save_csv(stats_df, slope, intercept, r2, env_df, slope_df,
@@ -460,7 +480,7 @@ def save_csv(stats_df, slope, intercept, r2, env_df, slope_df,
     ]
     meta_rows = [
         {'weight_g': '--- 線性擬合 ---'},
-        {'weight_g': 'slope (Hz/g)',     'n_runs': '', 'mean_hz': f"{slope:.8f}"},
+        {'weight_g': 'sensitivity (g/Hz)', 'n_runs': '', 'mean_hz': f"{1/slope:.8f}"},
         {'weight_g': 'intercept (Hz)',   'n_runs': '', 'mean_hz': f"{intercept:.4f}"},
         {'weight_g': 'R²',               'n_runs': '', 'mean_hz': f"{r2:.10f}"},
         {'weight_g': '--- 非線性誤差 ---'},
@@ -515,7 +535,7 @@ def main():
     print(f"\n{'='*70}")
     print(f"[{BATCH_NAME}] 完整指標摘要（底座 {BASE_WEIGHT_G}g）")
     print(f"{'='*70}")
-    print(f"  靈敏度 (slope)       : {slope:.6f} Hz/g")
+    print(f"  靈敏度 (sensitivity) : {1/slope:.6f} g/Hz")
     print(f"  線性度 R²            : {r2:.8f}")
     print(f"  量程 (頻率)          : {full_range_hz:.2f} Hz")
     print(f"  非線性誤差           : ±{nl_resid:.2f} Hz = ±{nl_pct:.4f}% F.S.")
@@ -543,6 +563,7 @@ def main():
     plot_per_run_slope(slope_df, slope_mean, run_dir, BATCH_NAME)
     plot_zero_drift(df_all, env_df, run_dir, BATCH_NAME)
     plot_env_overview(env_df, run_dir, BATCH_NAME)
+    plot_range_error(stats_df, slope, run_dir, BATCH_NAME, BASE_WEIGHT_G)
 
     save_csv(stats_df, slope, intercept, r2, env_df, slope_df,
              nl_resid, nl_pct, resolution, zero_drift, run_dir)
