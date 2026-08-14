@@ -1,0 +1,12 @@
+# Python virtualenv
+sensor/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Generated analysis output
+analysis_output/
+
+# Local sensor data
+home/sensor_data/
