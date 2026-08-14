@@ -1,12 +1,40 @@
-# Python virtualenv
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.conda/
 sensor/
 
-# Python bytecode
-__pycache__/
-*.pyc
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files
+*.csv
+*.log
 
 # Generated analysis output
 analysis_output/
-
-# Local sensor data
-home/sensor_data/
