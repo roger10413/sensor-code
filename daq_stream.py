@@ -62,15 +62,21 @@ class DAQFreqStream:
 
         # ------------------------------------------------------------
         # 【原始點緩衝, 供 get_all_new_raw() 使用】
-        # NI counter 每次 read() 是整批讀回來的, 沒有逐點時間戳。
-        # 這裡的做法: 用『這批讀完的當下時間』當這批最後一點的時間,
-        # 往前用 sample_rate 反推每一點的時間戳, 即:
-        #   t_i = t_read_done - (batch_size - 1 - i) / sample_rate
-        # 這是估計值 (假設批次內取樣間隔嚴格等於 1/sample_rate), 不是
-        # 硬體真實時戳, 但已是目前硬體介面下能做到的最佳近似, 誤差量級
-        # 遠小於取樣間隔本身 (batch 讀取延遲通常 <<1/sample_rate)。
+        # ★★★【時間戳單調性修正, 根本版】★★★
+        # 舊版做法: 每一批各自獨立地用『這批讀完的當下時間』往回推算批次內
+        # 每一點的時間戳。問題: 批次與批次之間完全沒有互相參照, 如果某一批
+        # 的讀取延遲比預期短一點, 這一批回推出來的第一個時間戳就可能比上一批
+        # 回推出來的最後一個時間戳還早, 產生倒退(實測772次, 最差-0.1997s)。
+        #
+        # 新版做法: 維護一個『下一點應該是幾秒』的錨點(self._next_t), 每點
+        # 固定往前走 1/sample_rate, 保證同一次execution內批次接批次一定
+        # 單調遞增。同時每批讀完時, 允許錨點『往前(更晚)』對齊到 t_read_done
+        # 推算出的真實時間(修正硬體時鐘漂移的長期累積), 但絕不允許錨點
+        # 往回(更早)跳動, 這樣就能同時滿足『長期跟真實時間對齊』與『絕對
+        # 單調遞增』兩個要求。
         # ------------------------------------------------------------
         self._raw_buffer = []             # [(timestamp, freq), ...] 待取走的新原始點
+        self._next_t = None                # 下一個樣本的錨點時間(None=尚未初始化)
 
     # ---------- 連線與啟動 ----------
     def connect(self):
@@ -146,13 +152,25 @@ class DAQFreqStream:
                 self._latest_batch = clean.tolist()
                 if n_clean > 0:
                     self._latest = float(clean[-1])
-                    # 反推每一點的估計時間戳 (見上方說明)
-                    if n_clean == 1:
-                        self._raw_buffer.append((t_read_done, float(clean[0])))
+
+                    # ★★★【單調時間戳, 根本版】★★★
+                    # 這批『理論上』該落在哪個時間窗: 用t_read_done往回推
+                    # 整批的起點, 供跟錨點比較用(判斷要不要把錨點往前對齊)。
+                    dt = 1.0 / self.sample_rate
+                    batch_start_est = t_read_done - (n_clean - 1) * dt
+
+                    if self._next_t is None:
+                        # 第一批: 直接用估計值當起點, 沒有前一批可比較
+                        self._next_t = batch_start_est
                     else:
-                        for i, v in enumerate(clean):
-                            t_i = t_read_done - (n_clean - 1 - i) / self.sample_rate
-                            self._raw_buffer.append((t_i, float(v)))
+                        # 錨點只允許往前(更晚)對齊到真實時間估計值,
+                        # 若真實時間估計值反而比錨點還早(代表這批讀取
+                        # 延遲比預期短), 維持錨點原地不動, 絕不倒退
+                        self._next_t = max(self._next_t, batch_start_est)
+
+                    for v in clean:
+                        self._raw_buffer.append((self._next_t, float(v)))
+                        self._next_t += dt   # 每點固定往前走 1/sample_rate, 保證單調遞增
 
             time.sleep(0.02)
 
@@ -181,7 +199,8 @@ class DAQFreqStream:
         """
         回傳自從上次呼叫後所有新的原始 (timestamp, freq) 點, 並清空緩衝。
         每個點都是硬體實際量到的原始值 (未平均、未篩選, 只濾掉非正值/NaN),
-        時間戳為估計值 (見 __init__ 註解)。給主程式高頻輪詢用。
+        時間戳為估計值, 但保證對同一個DAQFreqStream執行個體嚴格單調遞增
+        (見__init__與_recv_loop的說明)。給主程式高頻輪詢用。
         """
         with self._lock:
             items = self._raw_buffer
