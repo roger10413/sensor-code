@@ -51,6 +51,12 @@ try:
 except ImportError:
     rtde_receive = None
 
+# 引入姿態檢查模組，確保執行本實驗前 J1~J5 確實停在診斷原點姿態。
+try:
+    import ur5_home_pose as home_pose
+except ImportError:
+    home_pose = None
+
 
 # ============================================================
 # 使用者設定
@@ -448,9 +454,25 @@ def main():
         print("\n[中止] 找不到 rtde_receive，僅完成離線設計檢查。")
         return
 
+    # ---- 執行前強制檢查 J1~J5 是否在診斷原點姿態，避免忘記確認 ----
+    print("\n" + "=" * 70)
+    print(" 執行前姿態確認（診斷原點姿態，J1~J5）")
+    print("=" * 70)
+    if home_pose is None:
+        print("[警告] 找不到 ur5_home_pose 模組，無法自動檢查姿態！")
+        print("        請自己手動確認 J1~J5 是否為：-90°, 90°, -90°, -90°, 0°")
+        ans = input("已手動確認姿態正確，輸入 yes 繼續，其他任何輸入則取消：").strip().lower()
+        if ans != "yes":
+            print("已取消。")
+            return
+    else:
+        pose_ready = home_pose.ensure_home_pose(ROBOT_IP, mode="CHECK")
+        if not pose_ready:
+            print("\n[中止] 姿態不符合診斷原點，請先調整姿態後再執行本實驗。")
+            return
+
     print(f"\n即將對 IP={ROBOT_IP} 送出軌跡，關節 J{JOINT_INDEX}，方向 {DIRECTION:+d}。")
-    print("*** 請確認：其餘軸已固定於安全姿態，緊急停止在手邊，"
-          "且已確認底座線杜可承受本次累積旋轉角度 ***")
+    print("*** 請確認：其餘軸已固定於安全姿態，緊急停止在手邊 ***")
     input("按 Enter 繼續，或 Ctrl+C 取消...")
 
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
