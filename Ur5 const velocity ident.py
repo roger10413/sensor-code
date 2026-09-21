@@ -66,19 +66,34 @@ ROBOT_IP = "192.168.50.114"   # 已於先前對話確認為同一台機器，執
 JOINT_INDEX = 0
 
 DIRECTION = +1        # +1 = 正轉，-1 = 反轉。兩個方向分開執行，不要自動連續做
-QUICK_TEST_MODE = True   # True：只用最低速度、最短時間，先驗證安全與方向
+# QUICK: 單檔最低速，驗證方向與基本行為（位移 ~1.7°，4 KB 腳本）
+# MID  : 三檔中速，驗證大腳本解析與多檔回程累積偏差（QUICK 驗不到這兩項）
+# FULL : 完整六檔
+TEST_STAGE = "QUICK"
 
 SPEED_LEVELS = [0.02, 0.05, 0.08, 0.12, 0.16, 0.20]   # rad/s，對應 Notion 表格
 RAMP_TIME = 0.5    # 加減速時間 [s]
 HOLD_TIME = 6.0    # 每檔穩態停留時間 [s]
 
 QD_MAX = 0.30      # rad/s，安全上限
-QDD_MAX = 3.0      # rad/s^2，安全上限（保守值）
+QDD_CHECK_LIMIT = 3.0   # 安全檢查用：軌跡規劃加速度峰值的上限
+SPEEDJ_ACCEL    = 3.0   # 送給 URScript speedj 的 a= 參數。與檢查門檻解耦，
+                        # 避免為了通過檢查而調高門檻時，連帶放寬機器端上限
 MAX_EXCURSION_DEG = 90.0   # 單段最大位移警戒線（不是累積值），已比實際需求寬鬆很多
 
 SAMPLE_HZ = 125.0
 DT = 1.0 / SAMPLE_HZ
 KT_OUT = 101 * 0.1350   # 減速比 x Raviola 實測 J0 轉矩常數，換算 tau 用
+
+# speedj(t=dt) 只保證阻塞 dt，迴圈內其餘敘述會讓實際週期大於 dt。
+# 因 speedj 是速度命令，週期拉伸會讓位移等比例放大。
+# 未實測前使用保守假設；跑完任一輪後，程式會印出實測值，請回填此處。
+TIMING_STRETCH_FACTOR = 1.5
+
+# J0 允許的絕對角度活動視窗。必須由操作者依現場線纜與淨空狀況填寫，
+# 未填寫則程式中止 —— 不提供預設值，避免沿用他人現場條件。
+J0_SAFE_MIN_DEG = None
+J0_SAFE_MAX_DEG = None
 
 OUTPUT_DIR = "."
 
@@ -201,11 +216,15 @@ def build_full_trajectory(speeds, ramp_time, hold_time, dt, direction,
     return dict(qd=qd, q=q, qdd=qdd, steady=steady)
 
 
-def safety_check(traj, qd_max, qdd_max, max_excursion_deg):
+def safety_check(traj, qd_max, qdd_max, max_excursion_deg, stretch=1.0):
     """
     改用「單段最大位移」（離起點最遠的瞬間距離）當安全指標，不是累積角度。
     因為現在每個速度檔測完會回程歸零，位置不會無限累積，只要看任一時刻
     離起點多遠即可，這個值不會隨檔位數、重複次數增加而變大。
+
+    stretch：時序拉伸係數（見 TIMING_STRETCH_FACTOR 註解）。speedj(t=dt)
+    只保證阻塞 dt，迴圈內其餘敘述會讓實際週期大於 dt，位移因此等比例
+    放大，安全判斷必須用「計入拉伸後的最壞情況」，不能只看規劃值。
     """
     q, qd, qdd = traj['q'], traj['qd'], traj['qdd']
     lines = []
@@ -214,6 +233,7 @@ def safety_check(traj, qd_max, qdd_max, max_excursion_deg):
     qd_peak = float(np.max(np.abs(qd)))
     qdd_peak = float(np.max(np.abs(qdd)))
     max_excursion_deg_actual = math.degrees(float(np.max(np.abs(q - q[0]))))
+    max_excursion_deg_worst = max_excursion_deg_actual * stretch
     final_offset_deg = math.degrees(abs(q[-1] - q[0]))
 
     lines.append(f"速度峰值   : {qd_peak:.4f} rad/s  (限 {qd_max})")
@@ -228,10 +248,11 @@ def safety_check(traj, qd_max, qdd_max, max_excursion_deg):
     else:
         lines.append("  [OK]")
 
-    lines.append(f"單段最大位移（離起點最遠距離） : {max_excursion_deg_actual:.2f}°  "
+    lines.append(f"單段最大位移（規劃值）     : {max_excursion_deg_actual:.2f}°")
+    lines.append(f"單段最大位移（×時序拉伸 {stretch:.2f}） : {max_excursion_deg_worst:.2f}°  "
                  f"(警戒線 {max_excursion_deg}°)")
-    if max_excursion_deg_actual > max_excursion_deg:
-        lines.append("  [FAIL] 超過警戒線")
+    if max_excursion_deg_worst > max_excursion_deg:
+        lines.append("  [FAIL] 計入時序拉伸後超過警戒線")
         ok = False
     else:
         lines.append("  [OK]")
@@ -244,6 +265,27 @@ def safety_check(traj, qd_max, qdd_max, max_excursion_deg):
     lines.append(f"穩態樣本點數（用於鑑別） : {n_steady} / {len(qd)}")
 
     return ok, lines
+
+
+def check_j0_window(q0_deg, planned_excursion_deg, direction, stretch):
+    """
+    確認 J0 目前絕對角度，加上本次規劃行程（含時序拉伸餘裕）後，
+    仍落在允許視窗內。safety_check 用的是相對起點的位移，看不到
+    J0 實際在哪、離關節極限多遠、線纜已纏多少，這個函式補上那一塊。
+    """
+    if J0_SAFE_MIN_DEG is None or J0_SAFE_MAX_DEG is None:
+        return False, "J0_SAFE_MIN_DEG / J0_SAFE_MAX_DEG 尚未設定，拒絕執行"
+
+    reach_deg = q0_deg + direction * planned_excursion_deg * stretch
+    lo, hi = min(J0_SAFE_MIN_DEG, J0_SAFE_MAX_DEG), max(J0_SAFE_MIN_DEG, J0_SAFE_MAX_DEG)
+
+    msg = (f"J0 目前 {q0_deg:+.2f}°，往 {direction:+d} 方向最遠到 {reach_deg:+.2f}°"
+           f"（含拉伸 {stretch:.2f}），允許視窗 [{lo:+.1f}°, {hi:+.1f}°]")
+    if not (lo <= q0_deg <= hi):
+        return False, msg + " -> 起始角度已在視窗外"
+    if not (lo <= reach_deg <= hi):
+        return False, msg + " -> 行程終點超出視窗"
+    return True, msg + " -> OK"
 
 
 # ============================================================
@@ -283,6 +325,52 @@ def send_urscript(ip, script_text, port=30002):
     s.close()
 
 
+def send_abort(ip):
+    """
+    送一段只含 stopj 的程式到 30002。送新腳本會取代控制器上執行中的程式，
+    因此這是從 Python 端真正停下手臂的方式 —— 單純殺掉 Python 不會停。
+    """
+    try:
+        send_urscript(ip, "def abort_prog():\n  stopj(2.0)\nend\n")
+        print("[中止] 已送出 stopj。")
+    except Exception as e:
+        print(f"[中止] stopj 送出失敗：{e} —— 請立即按下緊急停止。")
+
+
+def wait_for_motion_complete(logger, planned_s, qd_eps=2e-3,
+                             quiet_s=1.0, no_motion_s=10.0, timeout_factor=3.0):
+    """
+    等到 J0 實際速度連續 quiet_s 秒低於門檻才視為結束，而不是憑規劃時長 sleep。
+    回傳 (status, elapsed)，status 為 'done' / 'no_motion' / 'timeout'。
+
+    'no_motion'：送出後遲遲量不到運動，通常代表控制器沒接受腳本
+    （79 KB 超長行解析失敗，或機器不在 remote control 模式）。
+    """
+    t_start = time.time()
+    hard_timeout = planned_s * timeout_factor + 5.0
+    moved = False
+    quiet_since = None
+
+    while True:
+        elapsed = time.time() - t_start
+        qd0 = logger.last_qd0
+
+        if qd0 is not None and abs(qd0) > qd_eps:
+            moved = True
+            quiet_since = None
+        elif moved:
+            if quiet_since is None:
+                quiet_since = time.time()
+            elif time.time() - quiet_since >= quiet_s:
+                return "done", elapsed
+
+        if not moved and elapsed > no_motion_s:
+            return "no_motion", elapsed
+        if elapsed > hard_timeout:
+            return "timeout", elapsed
+        time.sleep(0.05)
+
+
 # ============================================================
 # 第三部分：RTDE 記錄（沿用已驗證過的去重與漏拍偵測邏輯）
 # ============================================================
@@ -299,6 +387,12 @@ class RtdeLogger:
         self.loops = 0
         self.gaps = 0
         self.ctrl_times = []
+        self.last_q0 = None        # J0 最新絕對位置 [rad]
+        self.last_qd0 = None       # J0 最新速度 [rad/s]
+        self.q0_min = None         # 整段期間 J0 絕對位置的極值，用於實測位移
+        self.q0_max = None
+        self.started_ok = threading.Event()
+        self.error = None
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -310,9 +404,13 @@ class RtdeLogger:
             self._thread.join(timeout=10.0)
 
     def _run(self):
-        rtde_r = rtde_receive.RTDEReceiveInterface(self.robot_ip)
+        try:
+            rtde_r = rtde_receive.RTDEReceiveInterface(self.robot_ip)
+            csv_file = open(self.csv_path, "w", newline="", encoding="utf-8")
+        except Exception as e:
+            self.error = e          # 讓 main() 看得到，不要靜默死在背景執行緒
+            return
         get_ts = getattr(rtde_r, "getTimestamp", None)
-        csv_file = open(self.csv_path, "w", newline="", encoding="utf-8")
         writer = None
         last_ctrl_ts = None
         t0_ctrl = None
@@ -358,6 +456,14 @@ class RtdeLogger:
                 writer.writerow(row)
                 self.rows += 1
                 self.ctrl_times.append(t_main)
+
+                j = self.joint_index
+                self.last_q0 = q[j]
+                self.last_qd0 = qd[j]
+                self.q0_min = q[j] if self.q0_min is None else min(self.q0_min, q[j])
+                self.q0_max = q[j] if self.q0_max is None else max(self.q0_max, q[j])
+                self.started_ok.set()
+
                 if self.rows % 250 == 0:
                     csv_file.flush()
                 time.sleep(poll_interval)
@@ -431,15 +537,22 @@ def main():
     print("=" * 70)
     print(f"方向: {'正轉 (+1)' if DIRECTION > 0 else '反轉 (-1)'}")
 
-    speeds = SPEED_LEVELS[:1] if QUICK_TEST_MODE else SPEED_LEVELS
-    hold_time = 1.0 if QUICK_TEST_MODE else HOLD_TIME
-    print(f"模式: {'QUICK_TEST' if QUICK_TEST_MODE else '完整版'}")
+    if TEST_STAGE == "QUICK":
+        speeds, hold_time = SPEED_LEVELS[:1], 1.0
+    elif TEST_STAGE == "MID":
+        speeds, hold_time = SPEED_LEVELS[:3], 3.0
+    elif TEST_STAGE == "FULL":
+        speeds, hold_time = SPEED_LEVELS, HOLD_TIME
+    else:
+        raise ValueError(f"未知的 TEST_STAGE: {TEST_STAGE}")
+    print(f"模式: {TEST_STAGE}")
     print(f"速度檔位: {speeds}, 每檔穩態 {hold_time}s")
 
     traj = build_full_trajectory(speeds, RAMP_TIME, hold_time, DT, DIRECTION)
     print(f"\n總時長: {len(traj['qd'])*DT:.2f} s ({len(traj['qd'])} 點)")
 
-    ok, report = safety_check(traj, QD_MAX, QDD_MAX, MAX_EXCURSION_DEG)
+    ok, report = safety_check(traj, QD_MAX, QDD_CHECK_LIMIT, MAX_EXCURSION_DEG,
+                              TIMING_STRETCH_FACTOR)
     print("\n".join(report))
 
     if not ok:
@@ -472,30 +585,82 @@ def main():
             return
 
     print(f"\n即將對 IP={ROBOT_IP} 送出軌跡，關節 J{JOINT_INDEX}，方向 {DIRECTION:+d}。")
-    print("*** 請確認：其餘軸已固定於安全姿態，緊急停止在手邊 ***")
+    print("*** 送出後 Ctrl+C 會送出 stopj，但最可靠的仍是緊急停止按鈕 ***")
     input("按 Enter 繼續，或 Ctrl+C 取消...")
 
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     dir_label = "pos" if DIRECTION > 0 else "neg"
-    session_dir = os.path.join(OUTPUT_DIR, f"constvel_{dir_label}_{timestamp_str}")
+    session_dir = os.path.join(OUTPUT_DIR, f"constvel_{dir_label}_{TEST_STAGE.lower()}_{timestamp_str}")
     os.makedirs(session_dir, exist_ok=True)
     csv_path = os.path.join(session_dir, "constvel_data.csv")
     info_path = os.path.join(session_dir, "constvel_info.txt")
 
     logger = RtdeLogger(ROBOT_IP, SAMPLE_HZ, csv_path, JOINT_INDEX)
     logger.start()
-    time.sleep(0.5)
 
-    script_text = build_urscript(traj, DT, QDD_MAX, JOINT_INDEX)
-    print(f"[資訊] 送出 URScript（{len(traj['qd'])*DT:.1f} 秒）...")
-    send_urscript(ROBOT_IP, script_text)
+    if not logger.started_ok.wait(5.0):
+        logger.stop()
+        print(f"\n[中止] RTDE 記錄未能啟動：{logger.error}")
+        print("       未送出任何軌跡，手臂未動作。")
+        return
 
-    time.sleep(len(traj['qd']) * DT + 2.0)
-    logger.stop()
+    # ---- J0 絕對角度安全視窗檢查（阻斷項 C），資料來自剛啟動的 logger ----
+    q0_now_deg = math.degrees(logger.last_q0)
+    planned_excursion_deg = math.degrees(float(np.max(np.abs(traj['q'] - traj['q'][0]))))
+    window_ok, window_msg = check_j0_window(q0_now_deg, planned_excursion_deg,
+                                            DIRECTION, TIMING_STRETCH_FACTOR)
+    print(f"\n[J0 視窗檢查] {window_msg}")
+    if not window_ok:
+        logger.stop()
+        print("\n[中止] J0 絕對角度視窗檢查未通過，未送出任何軌跡，手臂未動作。")
+        return
+
+    planned_s = len(traj['qd']) * DT
+    status = "unknown"
+    elapsed = 0.0
+    try:
+        script_text = build_urscript(traj, DT, SPEEDJ_ACCEL, JOINT_INDEX)
+        print(f"[資訊] 送出 URScript（{planned_s:.1f} 秒）...")
+        send_urscript(ROBOT_IP, script_text)
+        status, elapsed = wait_for_motion_complete(logger, planned_s)
+
+        if status == "no_motion":
+            print(f"\n[警告] 送出後 {elapsed:.1f}s 內未偵測到 J0 運動。")
+            print("       控制器可能未接受腳本（超長行解析失敗，或不在 remote control 模式）。")
+        elif status == "timeout":
+            print(f"\n[警告] 超過硬性逾時（實際 {elapsed:.1f}s / 規劃 {planned_s:.1f}s），主動中止。")
+            send_abort(ROBOT_IP)
+        else:
+            print(f"\n[資訊] 運動結束，實際 {elapsed:.1f}s / 規劃 {planned_s:.1f}s")
+
+    except KeyboardInterrupt:
+        print("\n[中止] 收到 Ctrl+C。")
+        send_abort(ROBOT_IP)
+        raise
+    except BaseException:
+        send_abort(ROBOT_IP)
+        raise
+    finally:
+        logger.stop()
+
+    measured_lines = []
+    if logger.q0_min is not None and status == "done":
+        measured_excursion = math.degrees(logger.q0_max - logger.q0_min)
+        stretch_measured = elapsed / planned_s if planned_s > 0 else float('nan')
+        measured_lines = [
+            f"實測時序拉伸係數 : {stretch_measured:.3f}  "
+            f"(實際 {elapsed:.2f}s / 規劃 {planned_s:.2f}s)",
+            f"實測最大位移     : {measured_excursion:.2f}°  (規劃 {planned_excursion_deg:.2f}°)",
+            f">>> 請將 TIMING_STRETCH_FACTOR 回填為 {max(stretch_measured, 1.0):.2f} 後再跑下一階段",
+        ]
+        print("\n" + "\n".join(measured_lines))
 
     with open(info_path, "w", encoding="utf-8") as f:
-        f.write(f"方向: {DIRECTION:+d}\n速度檔位: {speeds}\n")
+        f.write(f"方向: {DIRECTION:+d}\n速度檔位: {speeds}\n模式: {TEST_STAGE}\n")
+        f.write(f"執行狀態: {status}\n")
         f.write(logger.summary() + "\n")
+        if measured_lines:
+            f.write("\n" + "\n".join(measured_lines) + "\n")
 
     print(f"\n[完成] 資料存至 {csv_path}")
     print(f"[完成] 摘要存至 {info_path}")
