@@ -1,5 +1,12 @@
 # Sensor Code - QCR Force Sensor Calibration System
 
+> **⚠️ Repo 結構說明（2026/09 整理）**
+> 本 repo 目前包含兩個獨立題目的程式碼：
+> 1. **主目錄** — UR5 CB3 關節參數鑑別（PHM 研究，現在進行中的題目）：`ur5_const_velocity_ident.py`、`ur5_const_accel_ident_v2.py`、`ur5_home_pose.py`、`get_pose.py`
+> 2. **`sensor_acquisition_archive/`** — 以下 README 其餘內容描述的 QCR 力感測器校正系統（舊題目，已封存，程式仍保留供之後參考）
+>
+> 兩者共用同一個 repo 只是歷史因素，邏輯上是不相關的兩件事。
+
 用 UR5 機械手臂 + Robotiq FT300 力/力矩感測器，對 QCR（石英共振力感測器）
 施加已知的力，同時記錄 QCR 的頻率輸出，建立「力 → 頻率」的校正曲線。
 
